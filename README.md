@@ -61,10 +61,14 @@ committed after a real load (they are anchor-dated; reconcile with `/verify` on 
 scrape day).
 
 ## Tests
-`uv run pytest` (with `DATABASE_URL` set) runs all suites:
+`uv run pytest` runs all suites against an isolated `*_test` database (derived from
+`DATABASE_URL` and auto-created, or set `TEST_DATABASE_URL`), so it never disturbs
+the load from steps 2-3:
 - `test_etl.py` / `test_tools.py`, against the database. They load a deterministic
   synthetic fixture (`tests/fixture_data.py`) engineered to exercise every published
-  scenario, so they pass before a live scrape and against a real load alike.
+  scenario, so they pass before a live scrape and against a real load alike. The
+  manifest reconciliation also re-checks `SCRAPE_MANIFEST.json` against the working
+  load when one is present, and skips when it is not.
 - `test_skills.py` / `test_agent.py`, structural / graph-introspection with a fake
   injected model. No LLM API calls.
 
