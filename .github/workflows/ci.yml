@@ -1,0 +1,55 @@
+name: solution CI
+
+on:
+  push:
+    branches: [main, "**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon
+          POSTGRES_DB: hotel_hackathon
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hackathon -d hotel_hackathon"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://hackathon:hackathon@localhost:5432/hotel_hackathon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Apply schema and views
+        run: |
+          uv run python - <<'PY'
+          import psycopg, pathlib
+          url = "postgresql://hackathon:hackathon@localhost:5432/hotel_hackathon"
+          schema = pathlib.Path("schema.sql").read_text()
+          overrides = pathlib.Path("sql/schema_overrides.sql").read_text()
+          views = pathlib.Path("sql/views.sql").read_text()
+          with psycopg.connect(url) as c:
+              with c.cursor() as cur:
+                  cur.execute(schema); cur.execute(overrides); cur.execute(views)
+              c.commit()
+          print("schema + overrides + views applied")
+          PY
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest -q
