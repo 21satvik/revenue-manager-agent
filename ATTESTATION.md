@@ -104,7 +104,7 @@ reads `dataset_revision` from **`/verify`**; load is **idempotent**
 truncate-and-reload in FK order with a `load_manifest` row per run; **anchor date =
 scrape day (2026-06-15)**, reconciled against `/verify` the same day.
 
-**Data note (rate plans):** reservations book against ~17 granular `rate_plan_code`s
+**Data note (rate plans):** reservations book against 16 granular `rate_plan_code`s
 (e.g. `EXPP`, `BARCBB`), but the published `rate_plan_lookup` is fixed at **8** rows
 (per `/verify` and ETL test scenario 1), so the brief's `rate_plan_code` foreign key
 cannot hold. We keep the real code on the fact table and relax **only** that FK via a

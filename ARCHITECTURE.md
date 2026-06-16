@@ -27,7 +27,7 @@ views → 5 typed tools → Deep Agent → FastAPI gateway (SSE) + chat UI`.
 Postgres runs on the deployment host (local docker-compose for dev). The brief's
 `schema.sql` is kept **byte-identical**; one documented `sql/schema_overrides.sql`
 (applied after schema, before views) relaxes **only** the `rate_plan_code` FK, because
-the data uses ~17 granular rate codes while `rate_plan_lookup` is a fixed 8-row
+the data uses 16 granular rate codes while `rate_plan_lookup` is a fixed 8-row
 dimension, so the two cannot coexist under a strict FK (the other three dimension FKs
 stay enforced).
 `sql/views.sql` sits between tools and raw tables: `vw_stay_night_base` (Posted,
