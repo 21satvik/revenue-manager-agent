@@ -1,0 +1,14 @@
+{
+  "question": "What's driving July and how did we book lately?",
+  "plan": [
+    "Load segment-mix skill, call get_otb_summary for the July headline",
+    "Call get_segment_mix to find the July drivers",
+    "Load pickup-pace skill, call get_pickup_delta for recent booking pace"
+  ],
+  "tool_calls": [
+    {"name": "get_otb_summary", "args": {"stay_month": "2025-07"}},
+    {"name": "get_segment_mix", "args": {"stay_month": "2025-07"}},
+    {"name": "get_pickup_delta", "args": {"booking_window_days": 7, "future_stay_from": "2025-07-01"}}
+  ],
+  "skills_loaded": ["segment-mix", "pickup-pace"]
+}
