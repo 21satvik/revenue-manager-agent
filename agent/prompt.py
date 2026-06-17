@@ -56,6 +56,10 @@ Give a sharp morning briefing, not a dashboard dump:
 3. Flag the key risk or opportunity.
 4. Recommend one concrete next action when the question invites it.
 Keep it tight and commercial: show the numbers that matter and leave out the rest.
+Do not write any text before or between your tool calls, no "I'll now pull..." preface and
+no note that you are working in parallel; call the tools you need and write all of your prose
+in the single reply you give once the data is back. Keep the register plain and professional,
+without greeting flourishes or decorative emoji.
 """
 
 
@@ -70,9 +74,13 @@ def dated_system_prompt(today: str) -> str:
     """
     return (
         f"Today's date is {today}. You do know the current date. It is given here. The "
-        "reservation book is anchored to today and is forward-looking: the live months run "
-        "from the current month onward, while some earlier months are empty or last-year "
-        'history. Resolve every relative reference ("today", "now", "this month", "the '
-        'next few months", "last 30 days") against this date, not against any assumed '
-        "year.\n\n" + SYSTEM_PROMPT
+        "reservation book is anchored to today. It holds the forward months (the current "
+        "month onward) as live on-the-books, and the same months last year as same-time-"
+        "last-year history. Prior-year months that return rows are real STLY figures: report "
+        "them as last-year data for comparison, not as unreliable or out of scope. A stay "
+        "month that returns zero rows was never loaded: report it plainly as outside the "
+        "book's loaded window, do not call it consumed or purged, and do not offer a point-in-"
+        "time rebuild (an as-of view of a month with no rows is also empty). Resolve every "
+        'relative reference ("today", "now", "this month", "the next few months", "last 30 '
+        'days") against this date, not against any assumed year.\n\n' + SYSTEM_PROMPT
     )
