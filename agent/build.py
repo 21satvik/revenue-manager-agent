@@ -25,6 +25,7 @@ from langgraph.store.memory import InMemoryStore
 
 from agent.prompt import dated_system_prompt
 from agent.subagents import SEGMENT_MIX_SUBAGENT
+from tools import MCP_SERVER_NAME
 from tools.metrics import ALL_TOOLS
 
 
@@ -42,6 +43,16 @@ INTERRUPT_ON = {HITL_TOOL: True}
 # Skill sources, relative to the filesystem backend root (SOLUTION_ROOT).
 SKILL_SOURCES = ["skills"]
 
+# The five-tool surface, by name. The MCP-loaded surface is checked against this before
+# it is wired onto the agent.
+REQUIRED_TOOL_NAMES = {
+    "get_otb_summary",
+    "get_segment_mix",
+    "get_pickup_delta",
+    "get_as_of_otb",
+    "get_block_vs_transient_mix",
+}
+
 
 def build_model(model_id: str | None = None):
     """Resolve the chat model from MODEL_ID (provider-agnostic, Claude by default)."""
@@ -54,6 +65,7 @@ def build_agent(
     *,
     model=None,
     model_id: str | None = None,
+    tools=None,
     checkpointer=None,
     store=None,
 ):
@@ -65,6 +77,8 @@ def build_agent(
     Args:
       model: a pre-built chat model to use directly; takes precedence over ``model_id``.
       model_id: model id to resolve when ``model`` is not given (else ``MODEL_ID``).
+      tools: the tool surface to register; defaults to the in-process ``ALL_TOOLS``.
+        The deployment path passes the same five tools loaded over MCP instead.
       checkpointer: conversation checkpointer; defaults to an in-memory saver
         (required for HITL, so a default is always wired in).
       store: long-term memory store; defaults to an in-memory store.
@@ -73,7 +87,7 @@ def build_agent(
     return create_deep_agent(
         model=model if model is not None else build_model(model_id),
         system_prompt=dated_system_prompt(_today()),
-        tools=ALL_TOOLS,
+        tools=tools if tools is not None else ALL_TOOLS,
         skills=SKILL_SOURCES,
         subagents=[SEGMENT_MIX_SUBAGENT],
         interrupt_on=INTERRUPT_ON,
@@ -83,19 +97,88 @@ def build_agent(
     )
 
 
+def _tool_transport() -> str:
+    """Tool transport from ``RM_TOOL_TRANSPORT``: ``direct`` (in-process, default) or ``mcp``."""
+    return os.environ.get("RM_TOOL_TRANSPORT", "direct").lower()
+
+
+def _mcp_connection() -> dict:
+    """Connection for the RM MCP server.
+
+    Streamable-HTTP to ``MCP_SERVER_URL`` when set, otherwise a local ``stdio`` subprocess
+    running this repo's server.
+    """
+    url = os.environ.get("MCP_SERVER_URL")
+    if url:
+        return {"transport": "streamable_http", "url": url}
+    import sys
+
+    return {
+        "transport": "stdio",
+        "command": sys.executable,
+        "args": ["-m", "mcp_server", "--transport", "stdio"],
+    }
+
+
+async def load_rm_tools_over_mcp(*, attempts: int = 5, backoff: float = 1.0) -> list:
+    """Load the five RM tools from the MCP server, retrying while it comes up.
+
+    Connection failures are retried with linear backoff (the server may still be starting
+    after a co-restart). Raises ``RuntimeError`` unless the server exposes exactly
+    ``REQUIRED_TOOL_NAMES``.
+    """
+    import asyncio
+
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+
+    client = MultiServerMCPClient({MCP_SERVER_NAME: _mcp_connection()})
+    for attempt in range(1, attempts + 1):
+        try:
+            tools = await client.get_tools()
+            break
+        except Exception:
+            if attempt == attempts:
+                raise
+            await asyncio.sleep(backoff * attempt)
+    names = {t.name for t in tools}
+    if names != REQUIRED_TOOL_NAMES:
+        raise RuntimeError(
+            f"MCP tool surface {sorted(names)} != required {sorted(REQUIRED_TOOL_NAMES)}"
+        )
+    return tools
+
+
 _AGENT = None
 _AGENT_DATE = None
 
 
 def get_agent():
-    """Return a process-wide singleton agent, rebuilt when the date rolls over.
+    """Return a process-wide singleton agent (in-process tools), rebuilt across midnight.
 
     The system prompt embeds today's date, so a long-running server stays correct
-    across midnight without a manual restart.
+    across midnight without a manual restart. Synchronous; for the MCP deployment path
+    use :func:`get_agent_async`.
     """
     global _AGENT, _AGENT_DATE
     today = _today()
     if _AGENT is None or _AGENT_DATE != today:
         _AGENT = build_agent()
+        _AGENT_DATE = today
+    return _AGENT
+
+
+async def get_agent_async():
+    """Singleton agent honouring ``RM_TOOL_TRANSPORT``, rebuilt when the date rolls over.
+
+    With ``RM_TOOL_TRANSPORT=mcp`` the five tools are loaded once from the MCP server;
+    otherwise the in-process tools are used.
+    """
+    global _AGENT, _AGENT_DATE
+    today = _today()
+    if _AGENT is None or _AGENT_DATE != today:
+        if _tool_transport() == "mcp":
+            _AGENT = build_agent(tools=await load_rm_tools_over_mcp())
+        else:
+            _AGENT = build_agent()
         _AGENT_DATE = today
     return _AGENT
