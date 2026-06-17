@@ -2,7 +2,8 @@
 
 One controllable service delivers all three deploy requirements:
 
-* **Basic auth** on every route (so the public URL can't be spammed).
+* **Basic auth** on the chat routes (so the public URL can't be spammed). ``/health``
+  is intentionally unauthenticated so the reviewers' automated pre-chat check can read it.
 * **GET /health** returns the four proof fields the reviewers check against the
   submitted LOAD_PROOF before chatting.
 * **POST /chat** streams the agent's LangGraph events over Server-Sent Events,
@@ -16,6 +17,8 @@ import hashlib
 import json
 import os
 import secrets
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +33,20 @@ SOLUTION_ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LOAD_PROOF_PATH = SOLUTION_ROOT / "etl" / "LOAD_PROOF.json"
 
-app = FastAPI(title="Revenue Manager Agent")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Build the agent once at startup.
+
+    Under ``RM_TOOL_TRANSPORT=mcp`` this also opens the MCP tool connection.
+    """
+    from agent.build import get_agent_async
+
+    await get_agent_async()
+    yield
+
+
+app = FastAPI(title="Revenue Manager Agent", lifespan=lifespan)
 security = HTTPBasic()
 
 
@@ -86,8 +102,12 @@ def _live_fingerprint() -> dict[str, Any]:
 
 
 @app.get("/health")
-def health(_: str = Depends(require_auth)) -> dict[str, Any]:
-    """Return live DB proof fields, plus the committed LOAD_PROOF for comparison."""
+def health() -> dict[str, Any]:
+    """Return live DB proof fields, plus the committed LOAD_PROOF for comparison.
+
+    Unauthenticated by design: it exposes only the published proof fields, and the
+    reviewers call it (without credentials) before chat to confirm the live DB matches.
+    """
     live = _live_fingerprint()
     if LOAD_PROOF_PATH.is_file():
         proof = json.loads(LOAD_PROOF_PATH.read_text())
@@ -124,6 +144,46 @@ def _classify(name: str, payload: dict) -> dict | None:
     return {"type": "tool", "name": name, "phase": payload.get("phase")}
 
 
+# The five business tools, whose inputs and results are surfaced (and made
+# expandable) in the UI; other tool calls show as a plain chip.
+BUSINESS_TOOLS = {
+    "get_otb_summary",
+    "get_segment_mix",
+    "get_pickup_delta",
+    "get_as_of_otb",
+    "get_block_vs_transient_mix",
+}
+
+
+def _jsonable(output: Any) -> Any:
+    """Best-effort JSON-safe view of a tool output.
+
+    Handles a plain dict, a ``ToolMessage`` (``.content``), a JSON string, or MCP
+    content blocks (``[{"type": "text", "text": "<json>"}]``) so the UI can render
+    the returned values either way.
+    """
+    content = getattr(output, "content", output)
+    if isinstance(content, list):
+        content = (
+            "".join(
+                b.get("text", "")
+                for b in content
+                if isinstance(b, dict) and b.get("type") in (None, "text", "text_delta")
+            )
+            or content
+        )
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except (ValueError, TypeError):
+            return content
+    try:
+        json.dumps(content)
+        return content
+    except (TypeError, ValueError):
+        return str(content)
+
+
 def _chunk_text(content: Any) -> str:
     """Extract answer text from a chat-model chunk or message content.
 
@@ -151,9 +211,9 @@ async def _event_stream(message: str, thread_id: str, approve: bool):
     pending interrupt instead of sending a new user message; ``thread_id`` keys the
     checkpointer so multi-turn memory and the resume target line up.
     """
-    from agent.build import get_agent
+    from agent.build import get_agent_async
 
-    agent = get_agent()
+    agent = await get_agent_async()
     config = {"configurable": {"thread_id": thread_id}}
     inp: Any
     if approve:
@@ -170,18 +230,47 @@ async def _event_stream(message: str, thread_id: str, approve: bool):
         inp = {"messages": [{"role": "user", "content": message}]}
 
     final_text = ""
+    answered = False  # only stream prose once a data tool has returned, so the model's
+    # pre-tool preamble ("I'll now pull...") is never shown, not shown-then-cleared
+    tool_started: dict[str, float] = {}  # run_id -> start time, for per-tool latency
     async for event in agent.astream_events(inp, config=config, version="v2"):
         kind = event["event"]
         name = event.get("name", "")
         if kind == "on_tool_start":
-            ui = _classify(name, {"input": event["data"].get("input"), "phase": "start"})
-            if ui:
-                yield _sse(ui)
-        elif kind == "on_tool_end":
-            ui = _classify(name, {"input": event["data"].get("input"), "phase": "end"})
-            if ui and ui["type"] == "tool":
-                yield _sse(ui)
-        elif kind == "on_chat_model_stream":
+            if name in BUSINESS_TOOLS:
+                # Any prose streamed before a data tool is preamble; reset so that if the
+                # answer had begun (a later tool round), it restarts clean after the data.
+                final_text = ""
+                yield _sse({"type": "reset"})
+                tool_started[event.get("run_id")] = time.perf_counter()
+                # Expandable chip: carry the call's inputs and a run id to match
+                # the result event that arrives on completion.
+                yield _sse(
+                    {
+                        "type": "tool",
+                        "name": name,
+                        "id": event.get("run_id"),
+                        "input": event["data"].get("input"),
+                    }
+                )
+            else:
+                ui = _classify(name, {"input": event["data"].get("input")})
+                if ui:
+                    yield _sse(ui)
+        elif kind == "on_tool_end" and name in BUSINESS_TOOLS:
+            answered = True  # from here, the model's prose is the answer, so stream it
+            started = tool_started.get(event.get("run_id"))
+            ms = round((time.perf_counter() - started) * 1000) if started else None
+            yield _sse(
+                {
+                    "type": "tool_result",
+                    "id": event.get("run_id"),
+                    "name": name,
+                    "output": _jsonable(event["data"].get("output")),
+                    "ms": ms,
+                }
+            )
+        elif kind == "on_chat_model_stream" and answered:
             chunk = event["data"].get("chunk")
             text = _chunk_text(getattr(chunk, "content", "") if chunk else "")
             if text:
