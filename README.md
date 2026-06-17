@@ -10,7 +10,7 @@ relaxation isolated in `sql/schema_overrides.sql`.
 ETL (Playwright → typed transform → idempotent load)
   → Postgres → semantic views → 5 typed tools
   → Deep Agent (skills · segment subagent · HITL on get_as_of_otb · memory)
-  → FastAPI gateway (basic auth · /health · SSE tool/skill streaming) + chat UI
+  → FastAPI gateway (basic-auth chat · open /health · SSE tool/skill streaming) + chat UI
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design and the skill→tool
@@ -26,7 +26,7 @@ routing matrix, and [ATTESTATION.md](ATTESTATION.md) for the Phase 0 comprehensi
 | `agent/` | `build.py` (`create_deep_agent` wiring) · `subagents.py` · `prompt.py` |
 | `mcp_server/` | publishes the 5 tools over MCP (bonus); the deployed agent consumes them over the protocol |
 | `app/` | `server.py` (FastAPI) · `static/index.html` (chat UI) |
-| `tests/` | `test_etl.py` · `test_tools.py` · `test_skills.py` · `test_agent.py` + synthetic fixture |
+| `tests/` | `test_etl.py` · `test_tools.py` · `test_skills.py` · `test_agent.py` · `test_mcp.py` + synthetic fixture |
 
 ## Run it end-to-end
 
@@ -72,6 +72,8 @@ the load from steps 2-3:
   load when one is present, and skips when it is not.
 - `test_skills.py` / `test_agent.py`, structural / graph-introspection with a fake
   injected model. No LLM API calls.
+- `test_mcp.py`, loads the tools over an in-memory MCP transport and checks a tool
+  round-trips to the same result as the in-process call. No network or API calls.
 
 ## MCP (bonus)
 The same five tools are also published as a standalone **MCP server** so any MCP client
@@ -107,9 +109,12 @@ deployment opts into MCP with `RM_TOOL_TRANSPORT=mcp` (and `MCP_SERVER_URL=...` 
 streamable-HTTP server); only the MCP server then holds `DATABASE_URL`.
 
 ## Deployment
-A single FastAPI service (uvicorn) behind nginx with HTTPS and HTTP basic auth, reading
-a hosted Postgres loaded by the ETL. `GET /health` returns `db_fingerprint`,
-`dataset_revision`, `row_hash`, and `financial_status_posted_only_rows`, computed live
-and compared to the committed `LOAD_PROOF.json`; `POST /chat` streams tool and skill
-events over SSE and the static page renders them live. The model API key and basic-auth
+A FastAPI service (uvicorn) behind nginx with HTTPS, reading a hosted Postgres loaded by
+the ETL. `POST /chat` and the chat page are HTTP basic-auth gated; `GET /health` is left
+unauthenticated so the reviewers' pre-chat proof check can read it. `GET /health` returns
+`db_fingerprint`, `dataset_revision`, `row_hash`, and `financial_status_posted_only_rows`,
+computed live and compared to the committed `LOAD_PROOF.json`; `POST /chat` streams tool and
+skill events over SSE and the static page renders them live. Under `RM_TOOL_TRANSPORT=mcp`
+the tool layer runs as a second service (`mcp_server`) the agent consumes over the protocol
+(see [ARCHITECTURE.md](ARCHITECTURE.md) section 9). The model API key and basic-auth
 credentials live only in the deployment environment, never committed.

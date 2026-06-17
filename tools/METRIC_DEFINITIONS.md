@@ -80,5 +80,8 @@ A market code's macro group is **effective-dated** in `market_macro_group_histor
 `get_segment_mix` reads `vw_segment_stay_night`, which resolves the macro group
 valid on each `stay_date` (`effective_macro_group`), falling back to
 `market_code_lookup.macro_group` only when no history row covers the date. Example:
-`PROM` reclassified mid-year, so the same code reports different macro groups in
-July vs August. Using the static lookup alone would misclassify post-change stays.
+`PROM` shows `Retail` in the static `market_code_lookup`, but its effective-dated history
+reclassifies it to `Leisure Group`; the view applies the value effective on each
+`stay_date`, so PROM stays in the loaded book read as `Leisure Group`, not the stale
+static `Retail`. A code whose effective date fell inside the analysis range would split
+across it. Using the static lookup alone would misclassify these stays.

@@ -95,12 +95,15 @@ OTB questions load `otb-summary`; pace → `pickup-pace`; mix/OTA → `segment-m
 Self-hosted on an always-on Linux VM, chosen over a free PaaS tier so the service never
 cold-starts during the review window.
 - **DB:** Postgres on the host, loaded by the ETL.
-- **Agent + UI:** one FastAPI service (`app/server.py`) run by a `systemd` unit
-  (uvicorn), behind `nginx` with HTTPS (Let's Encrypt) and HTTP basic auth. `POST /chat`
-  streams LangGraph events over **SSE**; the static page renders tool/skill chips live.
-- `GET /health` fields: `db_fingerprint` (= `reservation_stay_status_sha256`),
-  `dataset_revision`, `row_hash`, `financial_status_posted_only_rows`, computed live and
-  compared to the committed `LOAD_PROOF.json`.
+- **Agent + UI:** a FastAPI service (`app/server.py`) run by a `systemd` unit (uvicorn),
+  behind `nginx` with HTTPS (Let's Encrypt). `POST /chat` and the chat page are basic-auth
+  gated; the page renders tool/skill chips live over **SSE**, expandable to each tool's
+  inputs, result and latency.
+- **MCP server:** under `RM_TOOL_TRANSPORT=mcp` the tool layer runs as a second `systemd`
+  unit (`otel-mcp.service`, streamable-http on `127.0.0.1`) that the agent consumes (section 9).
+- `GET /health` is unauthenticated so the reviewers' pre-chat check can read it; fields:
+  `db_fingerprint` (= `reservation_stay_status_sha256`), `dataset_revision`, `row_hash`,
+  `financial_status_posted_only_rows`, computed live and compared to committed `LOAD_PROOF.json`.
 - API key and basic-auth credentials live only in the host environment, never in git.
 
 ## 8. Out of scope (and why)
