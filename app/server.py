@@ -205,11 +205,12 @@ def _chunk_text(content: Any) -> str:
 async def _event_stream(message: str, thread_id: str, approve: bool):
     """Stream the agent's LangGraph run for one turn as UI events.
 
-    Yields ``_sse`` frames as work happens: a chip per tool call / skill read, a
-    ``token`` per streamed answer chunk, an ``interrupt`` when a HITL gate pauses
-    the run, then a terminal ``final`` + ``[DONE]``. ``approve=True`` resumes a
-    pending interrupt instead of sending a new user message; ``thread_id`` keys the
-    checkpointer so multi-turn memory and the resume target line up.
+    Yields ``_sse`` frames as work happens: a chip per tool call / skill read, an
+    ``interrupt`` when a HITL gate pauses the run, then the ``final`` answer + ``[DONE]``.
+    Answer prose is buffered server-side and only the last model turn (the one with no
+    tool call after it) is sent, so preamble and between-round narration are never shown.
+    ``approve=True`` resumes a pending interrupt instead of sending a new user message;
+    ``thread_id`` keys the checkpointer so multi-turn memory and the resume target line up.
     """
     from agent.build import get_agent_async
 
@@ -230,18 +231,17 @@ async def _event_stream(message: str, thread_id: str, approve: bool):
         inp = {"messages": [{"role": "user", "content": message}]}
 
     final_text = ""
-    answered = False  # only stream prose once a data tool has returned, so the model's
-    # pre-tool preamble ("I'll now pull...") is never shown, not shown-then-cleared
+    turn_text = ""  # the current model turn's prose; cleared whenever a tool call follows
+    # it, so only the final answer (the turn with no tool call after it) is ever shown
     tool_started: dict[str, float] = {}  # run_id -> start time, for per-tool latency
     async for event in agent.astream_events(inp, config=config, version="v2"):
         kind = event["event"]
         name = event.get("name", "")
         if kind == "on_tool_start":
+            # Prose streamed before this tool call was preamble or between-round
+            # narration, not the answer; drop it so the UI never shows text then hides it.
+            turn_text = ""
             if name in BUSINESS_TOOLS:
-                # Any prose streamed before a data tool is preamble; reset so that if the
-                # answer had begun (a later tool round), it restarts clean after the data.
-                final_text = ""
-                yield _sse({"type": "reset"})
                 tool_started[event.get("run_id")] = time.perf_counter()
                 # Expandable chip: carry the call's inputs and a run id to match
                 # the result event that arrives on completion.
@@ -258,7 +258,6 @@ async def _event_stream(message: str, thread_id: str, approve: bool):
                 if ui:
                     yield _sse(ui)
         elif kind == "on_tool_end" and name in BUSINESS_TOOLS:
-            answered = True  # from here, the model's prose is the answer, so stream it
             started = tool_started.get(event.get("run_id"))
             ms = round((time.perf_counter() - started) * 1000) if started else None
             yield _sse(
@@ -270,12 +269,12 @@ async def _event_stream(message: str, thread_id: str, approve: bool):
                     "ms": ms,
                 }
             )
-        elif kind == "on_chat_model_stream" and answered:
+        elif kind == "on_chat_model_stream":
             chunk = event["data"].get("chunk")
-            text = _chunk_text(getattr(chunk, "content", "") if chunk else "")
-            if text:
-                final_text += text
-                yield _sse({"type": "token", "text": text})
+            turn_text += _chunk_text(getattr(chunk, "content", "") if chunk else "")
+    # The answer is the prose left after the last tool call, nothing cleared it.
+    if turn_text.strip():
+        final_text = turn_text
 
     state = agent.get_state(config)
     if state.interrupts:
