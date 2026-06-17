@@ -259,7 +259,7 @@
 
     function showApproval(ctx){
       const card = document.createElement('div'); card.className = 'hold';
-      card.innerHTML = '<div class="t"><b>Approval needed.</b> This runs a point-in-time rebuild (<code>get_as_of_otb</code>) — the heaviest query. Run it?</div>';
+      card.innerHTML = '<div class="t"><b>Approval needed.</b> This runs a point-in-time rebuild (<code>get_as_of_otb</code>), the heaviest query. Run it?</div>';
       const go = document.createElement('button'); go.textContent = 'Approve'; card.appendChild(go);
       ctx.ans.appendChild(card); keepDown(true);
       go.addEventListener('click', async () => {

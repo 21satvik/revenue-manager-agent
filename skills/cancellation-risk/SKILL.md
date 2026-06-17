@@ -14,7 +14,7 @@ threaten a month. Always report cancelled business **relative** to the book, not
 a bare number, 50 cancelled room nights means little without the denominator.
 
 ## Judgment thresholds and actions
-Compute cancelled share = (include-cancelled − exclude-cancelled) revenue ÷
+Compute cancelled share = (include-cancelled minus exclude-cancelled) revenue /
 include-cancelled revenue for the month:
 
 - **Normal (< 10%):** within expected wash. **Action:** none beyond monitoring.

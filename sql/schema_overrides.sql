@@ -1,10 +1,10 @@
--- Schema overrides — applied AFTER the brief's schema.sql, BEFORE the ETL load.
+-- Schema overrides, applied AFTER the brief's schema.sql, BEFORE the ETL load.
 --
 -- The brief's schema.sql is kept byte-identical to the challenge repo. The one
 -- place the live dataset cannot satisfy that schema is the rate_plan_code foreign
--- key: reservations book against ~17 granular rate codes (e.g. EXPP, BARCBB,
+-- key: reservations book against 16 granular rate codes (e.g. EXPP, BARCBB,
 -- BOOKBARB), while the published rate_plan_lookup is a fixed 8-row reference
--- dimension — and /verify plus ETL test scenario 1 both REQUIRE exactly 8 rows.
+-- dimension, and /verify plus ETL test scenario 1 both REQUIRE exactly 8 rows.
 -- A strict FK + an 8-row lookup + loading every real rate code cannot all hold.
 --
 -- Decision: keep the real rate_plan_code on the fact table (it is needed for the
